@@ -31,7 +31,6 @@ local activeFocusProfile = { {}, {} }
 -- Frame references
 local mainFrame
 local buttons = {}
-local UIHider -- Hidden frame for hiding Blizzard bars
 local focusRowFrame = {}
 local focusRowButtons = { {}, {} }
 
@@ -607,34 +606,7 @@ end
 -- Hide default action bars, Bartender4 HideBlizzard style. only once
 local hiddenParts = {}
 
--- clear a key w/o leaving taint on it
-local function PurgeKey(t, k)
-    t[k] = nil
-    local c = 42
-    repeat
-        if t[c] == nil then
-            t[c] = nil
-        end
-        c = c + 1
-    until issecurevariable(t, k)
-end
-
-local function HideActionBarFrame(frame, clearEvents)
-    if not frame then return end
-    if clearEvents then
-        frame:UnregisterAllEvents()
-    end
-    -- EditMode bits
-    if frame.system then
-        PurgeKey(frame, "isShownExternal")
-    end
-    if frame.HideBase then
-        frame:HideBase()
-    else
-        frame:Hide()
-    end
-    frame:SetParent(UIHider)
-end
+local HideActionBarFrame = ns.HideBlizzardBar
 
 local function HideActionButton(button)
     if not button then return end
@@ -646,11 +618,6 @@ end
 
 HideDefaultBars = function()
     RunWhenSafe("hidebars", function()
-        if not UIHider then
-            UIHider = CreateFrame("Frame")
-            UIHider:Hide()
-        end
-
         -- Bar 2 (slots 61-72) always goes, JG13 buttons 13-24 replace it
         if not hiddenParts.bar2 then
             HideActionBarFrame(MultiBarBottomLeft, true)

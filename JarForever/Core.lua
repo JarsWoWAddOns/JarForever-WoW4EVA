@@ -99,6 +99,44 @@ function ns.RunWhenSafe(key, fn)
 end
 
 -------------------------------------------------------------------------------
+-- Hiding blizz bars
+-------------------------------------------------------------------------------
+local barHider
+
+-- clear a key w/o leaving taint on it
+local function PurgeKey(t, k)
+    t[k] = nil
+    local c = 42
+    repeat
+        if t[c] == nil then
+            t[c] = nil
+        end
+        c = c + 1
+    until issecurevariable(t, k)
+end
+
+function ns.HideBlizzardBar(frame, clearEvents)
+    if not frame then return end
+    if not barHider then
+        barHider = CreateFrame("Frame")
+        barHider:Hide()
+    end
+    if clearEvents then
+        frame:UnregisterAllEvents()
+    end
+    -- EditMode bits
+    if frame.system then
+        PurgeKey(frame, "isShownExternal")
+    end
+    if frame.HideBase then
+        frame:HideBase()
+    else
+        frame:Hide()
+    end
+    frame:SetParent(barHider)
+end
+
+-------------------------------------------------------------------------------
 -- Modules + panels
 -------------------------------------------------------------------------------
 ns.moduleList = {}
@@ -193,7 +231,7 @@ local function InitDB()
         if db.general[k] == nil then db.general[k] = v end
     end
     db.modules = db.modules or {}
-    for _, key in ipairs({ "unitFrames", "bars", "cast", "bags", "npc", "rc", "grid", "xp", "gameMenu" }) do
+    for _, key in ipairs({ "unitFrames", "bars", "cast", "bags", "npc", "rc", "grid", "xp", "gameMenu", "stance" }) do
         db[key] = db[key] or {}
     end
     JarForeverCharDB.bars = JarForeverCharDB.bars or {}

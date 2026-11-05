@@ -23,5 +23,6 @@ Modules\Bags.lua
 Modules\NPCChat.lua
 Modules\ResourceCounter.lua
 Modules\XPBar.lua
+Modules\StanceBar.lua
 Modules\GameMenu.lua
 Modules\Grid.lua
