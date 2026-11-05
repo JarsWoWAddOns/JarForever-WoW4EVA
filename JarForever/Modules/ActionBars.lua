@@ -1091,6 +1091,11 @@ local function AcquireFocusButton(parent, slotID, size)
     return btn
 end
 
+-- its own lock box or the unlock in general
+local function IsFocusRowUnlocked(cfg)
+    return not cfg.locked or ns.db.general.unlocked
+end
+
 -- focus row frame is built once per bar and reused
 local function GetFocusRowFrame(barIndex)
     if focusRowFrame[barIndex] then return focusRowFrame[barIndex] end
@@ -1101,15 +1106,22 @@ local function GetFocusRowFrame(barIndex)
     f:SetClampedToScreen(true)
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self)
-        if not activeFocusProfile[barIndex].locked and not InCombatLockdown() then self:StartMoving() end
+        if IsFocusRowUnlocked(activeFocusProfile[barIndex]) and not InCombatLockdown() then self:StartMoving() end
     end)
     f:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
-        local _, _, _, x, y = self:GetPoint(1)
+        -- dragging can swap the anchor, go by the center so it doesnt jump later
+        local cx, cy = self:GetCenter()
+        local ux, uy = UIParent:GetCenter()
+        local x, y = cx - ux, cy - uy
         activeFocusProfile[barIndex].posX = x
         activeFocusProfile[barIndex].posY = y
         PersistActiveFocusProfile(barIndex)
         self.UpdateCoordLabel()
+        RunWhenSafe("focusmove" .. barIndex, function()
+            self:ClearAllPoints()
+            self:SetPoint("CENTER", UIParent, "CENTER", x, y)
+        end)
     end)
 
     -- Background
@@ -1122,6 +1134,11 @@ local function GetFocusRowFrame(barIndex)
     unlockBorder:SetPoint("BOTTOMRIGHT", 2, -2)
     unlockBorder:SetColorTexture(0, 1, 0, 0.3)
     f.unlockBorder = unlockBorder
+
+    f.nameLabel = f:CreateFontString(nil, "OVERLAY")
+    f.nameLabel:SetFont(ns.GetFont(), 11, "OUTLINE")
+    f.nameLabel:SetTextColor(0, 1, 0)
+    f.nameLabel:SetPoint("BOTTOM", f, "TOP", 0, 20)
 
     -- Nudge buttons + coords, only shown when unlocked
     local coordLabel = f:CreateFontString(nil, "OVERLAY")
@@ -1174,15 +1191,19 @@ BuildFocusRow = function(barIndex)
 
         local f = GetFocusRowFrame(barIndex)
         local cfg = GetFocusRowConfig(barIndex)
-        if not cfg or not cfg.enabled or #cfg.slots == 0 then
+        if not cfg or not cfg.enabled then
             UnregisterStateDriver(f, "visibility")
             f:Hide()
             return
         end
 
+        -- enabled w/ no slots yet still gets a box so you can see it
+        local unlocked = IsFocusRowUnlocked(cfg)
+        local isEmpty = #cfg.slots == 0
+
         local size = cfg.buttonSize or 40
         local padding = cfg.padding or 4
-        local count = #cfg.slots
+        local count = math.max(#cfg.slots, 1)
         local orientation = cfg.orientation or "horizontal"
         local isVertical = (orientation == "vertical")
 
@@ -1198,13 +1219,15 @@ BuildFocusRow = function(barIndex)
         f:SetSize(frameW, frameH)
         f:ClearAllPoints()
         f:SetPoint("CENTER", UIParent, "CENTER", cfg.posX or 0, cfg.posY or -200)
-        f:EnableMouse(not cfg.locked)
+        f:EnableMouse(unlocked)
         f.bg:SetColorTexture(0, 0, 0, cfg.bgOpacity or 0.3)
-        f.unlockBorder:SetShown(not cfg.locked)
-        f.coordLabel:SetShown(not cfg.locked)
+        f.unlockBorder:SetShown(unlocked or isEmpty)
+        f.nameLabel:SetText("Focus Bar " .. barIndex .. (isEmpty and " (no slots yet)" or ""))
+        f.nameLabel:SetShown(unlocked or isEmpty)
+        f.coordLabel:SetShown(unlocked)
         f.UpdateCoordLabel()
         for _, nb in ipairs(f.nudges) do
-            nb:SetShown(not cfg.locked)
+            nb:SetShown(unlocked)
         end
 
         -- Create buttons
@@ -1216,14 +1239,15 @@ BuildFocusRow = function(barIndex)
                 btn:SetPoint("LEFT", f, "LEFT", 4 + (i - 1) * (size + padding), 0)
             end
             -- Non-interactive: disable mouse on buttons so they're display-only
-            if cfg.nonInteractive then
+            -- same while unlocked so the whole bar drags
+            if cfg.nonInteractive or unlocked then
                 btn:EnableMouse(false)
             end
             focusRowButtons[barIndex][i] = btn
         end
 
         -- Combat-only visibility, secure driver so it works in combat
-        if cfg.combatOnly then
+        if cfg.combatOnly and not unlocked and not isEmpty then
             RegisterStateDriver(f, "visibility", "[combat] show; hide")
         else
             UnregisterStateDriver(f, "visibility")
@@ -1241,6 +1265,11 @@ local function BuildFocusRowDebounced(barIndex)
         BuildFocusRow(barIndex)
     end)
 end
+
+-- general's unlock toggle
+ns.OnShared(function()
+    for i = 1, NUM_FOCUS_BARS do BuildFocusRowDebounced(i) end
+end)
 
 -- Layout positioning functions
 ApplyG13Layout = function(frame)
@@ -1703,7 +1732,7 @@ end
 local function Percent(v) return string.format("%.0f%%", v * 100) end
 
 -- little keyboard for keybind mode
--- yellow = on these bars, red = something else has it, green = free
+-- red = locked (menus, sit, sheathe...), yellow = assigned, green = free
 if LibKeyBound then
     local SIZE, GAP = 30, 3
     local PITCH = SIZE + GAP
@@ -1713,53 +1742,75 @@ if LibKeyBound then
         { indent = PITCH * 1.75, keys = "ASDFGHJKL;'" },
         { indent = PITCH * 2.25, keys = "ZXCVBNM,./" },
     }
+    -- key, label, column, row
+    local ARROWS = {
+        { "UP", "^", 1, 2 },
+        { "LEFT", "<", 0, 3 }, { "DOWN", "v", 1, 3 }, { "RIGHT", ">", 2, 3 },
+    }
     local YELLOW, RED, GREEN = { 1, 0.82, 0 }, { 0.85, 0.2, 0.2 }, { 0.2, 0.75, 0.3 }
+
+    -- forever's interface bindings + the special ones
+    local LOCKED = {}
+    for action in ([[
+        TOGGLEGAMEMENU TOGGLEBACKPACK TOGGLEREAGENTBAG1 TOGGLEBAG1 TOGGLEBAG2 TOGGLEBAG3 TOGGLEBAG4 OPENALLBAGS
+        TOGGLECHARACTER0 TOGGLECHARACTER2 TOGGLECURRENCY TOGGLECHARACTER4
+        TOGGLESPELLBOOK TOGGLEPROFESSIONBOOK TOGGLELEGACYSYSTEM TOGGLEPETBOOK TOGGLETALENTS TOGGLECOOLDOWNVIEWERSETTINGS
+        TOGGLEQUESTLOG TOGGLEWORLDMAP TOGGLEWORLDMAPSIZE TOGGLEMINIMAP TOGGLEBATTLEFIELDMINIMAP TOGGLEWORLDSTATESCORES
+        TOGGLEGUILDTAB TOGGLESOCIAL TOGGLEFRIENDSTAB TOGGLEWHOTAB TOGGLECHATTAB TOGGLERAIDTAB TOGGLETEXTTOSPEECH
+        TOGGLECOLLECTIONS TOGGLECOLLECTIONSMOUNTJOURNAL TOGGLECOLLECTIONSPETJOURNAL TOGGLECOLLECTIONSTOYBOX TOGGLECOLLECTIONSWARDROBE
+        SITORSTAND TOGGLESHEATH NAMEPLATES
+    ]]):gmatch("%S+") do
+        LOCKED[action] = true
+    end
 
     -- no mouse on this one, it cant get in the way of binding
     local keyMap = CreateFrame("Frame", "JarForeverKeyMap", UIParent, "BackdropTemplate")
     keyMap:SetFrameStrata("FULLSCREEN_DIALOG")
     keyMap:SetPoint("CENTER")
-    keyMap:SetSize(24 + PITCH * 14.5 - GAP, 24 + PITCH * 4 - GAP + 22)
+    keyMap:SetSize(24 + PITCH * 15.5 - GAP, 24 + PITCH * 4 - GAP + 22)
     keyMap:SetBackdrop(ns.BACKDROP)
     keyMap:SetBackdropColor(unpack(ns.UI.bg))
     keyMap:SetBackdropBorderColor(unpack(ns.UI.border))
     keyMap:Hide()
 
     local keys = {}
+    local function AddKey(key, label, x, row)
+        local tex = keyMap:CreateTexture(nil, "ARTWORK")
+        tex:SetSize(SIZE, SIZE)
+        tex:SetPoint("TOPLEFT", 12 + x, -12 - row * PITCH)
+        tex.label = keyMap:CreateFontString(nil, "OVERLAY")
+        tex.label:SetPoint("CENTER", tex)
+        tex.label:SetFont(ns.GetFont(), 13, "")
+        tex.label:SetTextColor(0, 0, 0)
+        tex.label:SetText(label)
+        keys[key] = tex
+    end
     for r, row in ipairs(ROWS) do
-        local x = 12 + row.indent
+        local x = row.indent
         for key in row.keys:gmatch(".") do
-            local tex = keyMap:CreateTexture(nil, "ARTWORK")
-            tex:SetSize(SIZE, SIZE)
-            tex:SetPoint("TOPLEFT", x, -12 - (r - 1) * PITCH)
-            tex.label = keyMap:CreateFontString(nil, "OVERLAY")
-            tex.label:SetPoint("CENTER", tex)
-            tex.label:SetFont(ns.GetFont(), 13, "")
-            tex.label:SetTextColor(0, 0, 0)
-            tex.label:SetText(key)
-            keys[key] = tex
+            AddKey(key, key, x, r - 1)
             x = x + PITCH
         end
+    end
+    for _, arrow in ipairs(ARROWS) do
+        AddKey(arrow[1], arrow[2], PITCH * (12.5 + arrow[3]), arrow[4])
     end
 
     local legend = keyMap:CreateFontString(nil, "OVERLAY")
     legend:SetPoint("BOTTOM", 0, 10)
     legend:SetFont(ns.GetFont(), 12, "")
-    legend:SetText("|cffffd100On your bars|r     |cffd93333Used by something else|r     |cff33bf4dFree|r")
+    legend:SetText("|cffd93333Locked|r     |cffffd100Assigned|r     |cff33bf4dFree|r")
 
     local function RefreshKeyMap()
-        local mine = {}
-        for i = 1, 24 do mine[GetButtonBindCommand(i)] = true end
-
         local font = ns.GetFont()
         legend:SetFont(font, 12, "")
         for key, tex in pairs(keys) do
             local action = GetBindingAction(key)
             local color = GREEN
-            if mine[action] then
-                color = YELLOW
-            elseif action and action ~= "" then
+            if LOCKED[action] then
                 color = RED
+            elseif action and action ~= "" then
+                color = YELLOW
             end
             tex:SetColorTexture(color[1], color[2], color[3], 1)
             tex.label:SetFont(font, 13, "")
@@ -1907,7 +1958,10 @@ ns.RegisterPanel(25, "Focus Bars", function(b)
         BuildFocusRow(bar)
     end
 
-    b:Text("Small extra bars showing any action slots you pick.")
+    -- b:Text("Small extra bars showing any action slots you pick.")
+    b:Text("Monitor specific action bar buttons for cooldowns or stacks.")
+    b:Text("Each icon shows the ability in the action slot you pick (1-180).")
+    b:Text("Tick Non-interactive below if you only want to watch them.")
     b:Toggle("Editing", { { "Bar 1", 1 }, { "Bar 2", 2 } },
         function() return bar end,
         function(v)

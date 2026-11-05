@@ -520,7 +520,7 @@ ns.RegisterPanel(10, "General", function(b)
         function() return g.bgAlpha end,
         function(v) g.bgAlpha = v; ns.ApplyShared() end,
         function(v) return string.format("%.0f%%", v * 100) end)
-    b:Check("Unlock Frames  (drag unit frames and combo points, shift+drag party)",
+    b:Check("Unlock Frames  (drag unit frames, focus bars and combo points, shift+drag party)",
         function() return g.unlocked end,
         function(v) g.unlocked = v; ns.ApplyShared() end)
 
