@@ -1,0 +1,27 @@
+## Interface: 16001
+## Title: JarForever
+## Notes: Jar's action bars, unit frames, cast bars, bags, NPC chat, combo points, XP bar and grid in one addon
+## Author: Jar
+## Version: 1.0
+## SavedVariables: JarForeverDB
+## SavedVariablesPerCharacter: JarForeverCharDB
+## OptionalDeps: JarsErrorTrap, JarGrid, JarsAddonConfig, JarsBags, JarsCastbar, JarsG13Bars, JarsNPCChat, JarsResourceCounter, JarsTextures, juf, JarsFontChanger
+
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibSharedMedia-3.0\lib.xml
+Libs\LibKeyBound-1.0\lib.xml
+
+Core.lua
+Config.lua
+Modules\Fonts.lua
+Modules\BestGearCore.lua
+Modules\ActionBars.lua
+Modules\UnitFrames.lua
+Modules\CastBars.lua
+Modules\Bags.lua
+Modules\NPCChat.lua
+Modules\ResourceCounter.lua
+Modules\XPBar.lua
+Modules\GameMenu.lua
+Modules\Grid.lua
